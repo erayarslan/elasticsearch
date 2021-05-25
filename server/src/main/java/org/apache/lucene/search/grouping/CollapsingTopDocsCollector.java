@@ -11,6 +11,9 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.FieldComparator;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.LeafFieldComparator;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Sort;
@@ -20,8 +23,10 @@ import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.mapper.MappedFieldType;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.TreeSet;
 
 import static org.apache.lucene.search.SortField.Type.SCORE;
 
@@ -38,18 +43,24 @@ import static org.apache.lucene.search.SortField.Type.SCORE;
 public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollector<T> {
     protected final String collapseField;
     protected final Sort sort;
+    @Nullable protected final Sort collapseSort;
+    protected Scorable scorer;
     private int totalHitCount;
-
+    protected final IndexSearcher indexSearcher;
+    protected final Query query;
     private final FieldDoc after;
     private final FieldComparator<?> comparator;
     private final int reversed;
     private LeafFieldComparator leafComparator;
 
     @SuppressWarnings("unchecked")
-    CollapsingTopDocsCollector(GroupSelector<T> groupSelector, String collapseField, Sort sort, int topN, FieldDoc after) {
+    CollapsingTopDocsCollector(IndexSearcher indexSearcher, Query query, GroupSelector<T> groupSelector, String collapseField, Sort sort, @Nullable Sort collapseSort, int topN, FieldDoc after) {
         super(groupSelector, sort, topN);
+        this.indexSearcher = indexSearcher;
+        this.query = query;
         this.collapseField = collapseField;
         this.sort = sort;
+        this.collapseSort = collapseSort;
         this.after = after;
         assert after == null || (sort.getSort().length == 1 && after.doc == Integer.MAX_VALUE);
 
@@ -68,6 +79,19 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
      */
     public CollapseTopFieldDocs getTopDocs() throws IOException {
         Collection<SearchGroup<T>> groups = super.getTopGroups(0);
+        TreeSet<CollectedSearchGroup<T>> orderedGroups = super.orderedGroups;
+
+        if (collapseSort != null) {
+            SortingCollectedSearchGroups<T> sortingCollectedSearchGroups = new SortingCollectedSearchGroups<T>(
+                getGroupSelector(),
+                new ArrayList<>(orderedGroups),
+                sort
+            );
+            indexSearcher.search(query, sortingCollectedSearchGroups);
+            groups = sortingCollectedSearchGroups.getTopGroups();
+            orderedGroups = sortingCollectedSearchGroups.orderedGroups;
+        }
+
         if (groups == null) {
             TotalHits totalHits = new TotalHits(0, TotalHits.Relation.EQUAL_TO);
             return new CollapseTopFieldDocs(collapseField, totalHits, new ScoreDoc[0], sort.getSort(), new Object[0]);
@@ -132,22 +156,28 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
      * the collect will fail with an {@link IllegalStateException} if a document contains more than one value for the
      * field.
      *
+     * @param indexSearcher     The index searcher
+     * @param query             The query
      * @param collapseField     The sort field used to group documents.
      * @param collapseFieldType The {@link MappedFieldType} for this sort field.
      * @param sort              The {@link Sort} used to sort the collapsed hits.
+     * @param collapseSort      {@link Sort}
      *                          The collapsing keeps only the top sorted document per collapsed key.
      *                          This must be non-null, ie, if you want to groupSort by relevance
      *                          use Sort.RELEVANCE.
      * @param topN              How many top groups to keep.
      * @param after             The field values to search after. Can be null.
      */
-    public static CollapsingTopDocsCollector<?> createNumeric(String collapseField,
+    public static CollapsingTopDocsCollector<?> createNumeric(IndexSearcher indexSearcher,
+                                                              Query query,
+                                                              String collapseField,
                                                               MappedFieldType collapseFieldType,
                                                               Sort sort,
+                                                              @Nullable Sort collapseSort,
                                                               int topN,
                                                               @Nullable FieldDoc after)  {
-        return new CollapsingTopDocsCollector<>(new CollapsingDocValuesSource.Numeric(collapseFieldType),
-                collapseField, sort, topN, after);
+            return new CollapsingTopDocsCollector<>(indexSearcher, query, new CollapsingDocValuesSource.Numeric(collapseFieldType),
+                collapseField, sort, collapseSort, topN, after);
     }
 
     /**
@@ -156,20 +186,26 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
      * the collect will fail with an {@link IllegalStateException} if a document contains more than one value for the
      * field.
      *
+     * @param indexSearcher     The index searcher
+     * @param query             The query
      * @param collapseField     The sort field used to group documents.
      * @param collapseFieldType The {@link MappedFieldType} for this sort field.
      * @param sort              The {@link Sort} used to sort the collapsed hits. The collapsing keeps only the top sorted
      *                          document per collapsed key.
+     * @param collapseSort      {@link Sort}
      *                          This must be non-null, ie, if you want to groupSort by relevance use Sort.RELEVANCE.
      * @param topN              How many top groups to keep.
      * @param after             The field values to search after. Can be null.
      */
-    public static CollapsingTopDocsCollector<?> createKeyword(String collapseField,
+    public static CollapsingTopDocsCollector<?> createKeyword(IndexSearcher indexSearcher,
+                                                              Query query,
+                                                              String collapseField,
                                                               MappedFieldType collapseFieldType,
                                                               Sort sort,
+                                                              @Nullable Sort collapseSort,
                                                               int topN,
                                                               @Nullable FieldDoc after)  {
-        return new CollapsingTopDocsCollector<>(new CollapsingDocValuesSource.Keyword(collapseFieldType),
-                collapseField, sort, topN, after);
+                return new CollapsingTopDocsCollector<>(indexSearcher, query, new CollapsingDocValuesSource.Keyword(collapseFieldType),
+                    collapseField, sort, collapseSort, topN, after);
     }
 }
