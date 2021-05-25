@@ -35,9 +35,10 @@ import static org.apache.lucene.search.SortField.Type.SCORE;
  * TODO: If the sort is based on score we should propagate the mininum competitive score when <code>orderedGroups</code> is full.
  * This is safe for collapsing since the group <code>sort</code> is the same as the query sort.
  */
-public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollector<T> {
+public final class CollapsingTopDocsCollector<T> extends CustomFirstPass<T> {
     protected final String collapseField;
     protected final Sort sort;
+    @Nullable protected final Sort collapseSort;
     private int totalHitCount;
 
     private final FieldDoc after;
@@ -46,10 +47,11 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
     private LeafFieldComparator leafComparator;
 
     @SuppressWarnings("unchecked")
-    CollapsingTopDocsCollector(GroupSelector<T> groupSelector, String collapseField, Sort sort, int topN, FieldDoc after) {
-        super(groupSelector, sort, topN);
+    CollapsingTopDocsCollector(GroupSelector<T> groupSelector, String collapseField, Sort sort, @Nullable Sort collapseSort, int topN, FieldDoc after) {
+        super(groupSelector, collapseSort == null ? sort : collapseSort, sort, topN);
         this.collapseField = collapseField;
         this.sort = sort;
+        this.collapseSort = collapseSort;
         this.after = after;
         assert after == null || (sort.getSort().length == 1 && after.doc == Integer.MAX_VALUE);
 
@@ -135,6 +137,7 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
      * @param collapseField     The sort field used to group documents.
      * @param collapseFieldType The {@link MappedFieldType} for this sort field.
      * @param sort              The {@link Sort} used to sort the collapsed hits.
+     * @param collapseSort      {@link Sort}
      *                          The collapsing keeps only the top sorted document per collapsed key.
      *                          This must be non-null, ie, if you want to groupSort by relevance
      *                          use Sort.RELEVANCE.
@@ -144,10 +147,11 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
     public static CollapsingTopDocsCollector<?> createNumeric(String collapseField,
                                                               MappedFieldType collapseFieldType,
                                                               Sort sort,
+                                                              @Nullable Sort collapseSort,
                                                               int topN,
                                                               @Nullable FieldDoc after)  {
-        return new CollapsingTopDocsCollector<>(new CollapsingDocValuesSource.Numeric(collapseFieldType),
-                collapseField, sort, topN, after);
+            return new CollapsingTopDocsCollector<>(new CollapsingDocValuesSource.Numeric(collapseFieldType),
+                collapseField, sort, collapseSort, topN, after);
     }
 
     /**
@@ -160,6 +164,7 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
      * @param collapseFieldType The {@link MappedFieldType} for this sort field.
      * @param sort              The {@link Sort} used to sort the collapsed hits. The collapsing keeps only the top sorted
      *                          document per collapsed key.
+     * @param collapseSort      {@link Sort}
      *                          This must be non-null, ie, if you want to groupSort by relevance use Sort.RELEVANCE.
      * @param topN              How many top groups to keep.
      * @param after             The field values to search after. Can be null.
@@ -167,9 +172,10 @@ public final class CollapsingTopDocsCollector<T> extends FirstPassGroupingCollec
     public static CollapsingTopDocsCollector<?> createKeyword(String collapseField,
                                                               MappedFieldType collapseFieldType,
                                                               Sort sort,
+                                                              @Nullable Sort collapseSort,
                                                               int topN,
                                                               @Nullable FieldDoc after)  {
-        return new CollapsingTopDocsCollector<>(new CollapsingDocValuesSource.Keyword(collapseFieldType),
-                collapseField, sort, topN, after);
+                return new CollapsingTopDocsCollector<>(new CollapsingDocValuesSource.Keyword(collapseFieldType),
+                    collapseField, sort, collapseSort, topN, after);
     }
 }
